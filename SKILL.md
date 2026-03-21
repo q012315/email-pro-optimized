@@ -53,7 +53,16 @@ python3 scripts/email-pro.py --account qq_3421 check --unread
 python3 scripts/email-pro.py --account qq_136 check --limit 5
 ```
 
-### 3. 授权 Outlook 邮箱
+### 3. 授权 Gmail 邮箱
+```bash
+# 自动授权 Gmail
+python3 scripts/authorize.py gmail --name gmail_qiao
+
+# 或使用默认配置
+python3 scripts/authorize.py gmail
+```
+
+### 4. 授权 Outlook 邮箱
 ```bash
 # 自动授权（已配置 Azure 信息）
 bash scripts/authorize-outlook.sh
@@ -66,15 +75,25 @@ python3 scripts/authorize.py outlook \
   --name "outlook_live"
 ```
 
-### 4. 检查 Outlook 邮件
+### 5. 检查邮件（Gmail/Outlook）
 ```bash
+# Gmail
+python3 scripts/email-pro.py --account gmail_qiao check --limit 10
+
+# Outlook
 python3 scripts/email-pro.py --account outlook_live check --limit 10
 ```
 
-### 5. 发送邮件
+### 6. 发送邮件
 ```bash
 # QQ 邮箱
 python3 scripts/email-pro.py --account qq_136 send \
+  --to "recipient@example.com" \
+  --subject "Hello" \
+  --body "Test email"
+
+# Gmail
+python3 scripts/email-pro.py --account gmail_qiao send \
   --to "recipient@example.com" \
   --subject "Hello" \
   --body "Test email"
@@ -84,6 +103,30 @@ python3 scripts/email-pro.py --account outlook_live send \
   --to "recipient@example.com" \
   --subject "Hello" \
   --body "Test email"
+```
+
+## OAuth 自动刷新
+
+Gmail 和 Outlook 的 OAuth token 会自动刷新，无需手动干预。
+
+### 工作原理
+
+- **自动检测过期** - 每次使用前自动检查 token 是否过期
+- **提前刷新** - 提前 5 分钟刷新，避免过期
+- **透明处理** - 调用方无需关心刷新逻辑
+- **持久化** - 新 token 自动保存到凭证文件
+
+### 在代码中使用
+
+```python
+from scripts.oauth_handler import get_valid_token
+
+# 获取有效的 token（自动刷新）
+token = get_valid_token('gmail')
+headers = {'Authorization': f'Bearer {token}'}
+
+# 使用 headers 调用 Gmail API
+response = requests.get('https://www.googleapis.com/gmail/v1/users/me/profile', headers=headers)
 ```
 
 ## 高级用法

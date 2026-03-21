@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 OAuth 2.0 处理器 - 支持 Gmail 和 Outlook
+包含自动刷新机制
 """
 
 import json
@@ -11,6 +12,7 @@ from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlencode, parse_qs, urlparse
 import threading
+from datetime import datetime, timedelta
 
 CREDENTIALS_DIR = Path.home() / '.openclaw' / 'credentials'
 OAUTH_TOKENS_FILE = CREDENTIALS_DIR / 'oauth_tokens.json'
@@ -246,3 +248,100 @@ def list_oauth_accounts():
     
     with open(OAUTH_TOKENS_FILE, 'r') as f:
         return json.load(f)
+
+def is_token_expired(expires_at, buffer_minutes=5):
+    """检查 token 是否已过期（提前 buffer_minutes 分钟）"""
+    expiry_time = datetime.fromtimestamp(expires_at)
+    buffer_time = datetime.now() + timedelta(minutes=buffer_minutes)
+    return buffer_time >= expiry_time
+
+def _get_oauth_credentials(provider='gmail'):
+    """从环境变量或配置文件获取 OAuth 凭证"""
+    import os
+    
+    if provider == 'gmail':
+        # 优先从环境变量读取
+        client_id = os.getenv('GMAIL_CLIENT_ID')
+        client_secret = os.getenv('GMAIL_CLIENT_SECRET')
+        
+        if client_id and client_secret:
+            return client_id, client_secret
+        
+        # 从配置文件读取
+        config_file = CREDENTIALS_DIR / 'oauth_config.json'
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                return config.get('gmail', {}).get('client_id'), config.get('gmail', {}).get('client_secret')
+    
+    return None, None
+
+def refresh_gmail_token_auto(account_name='gmail', client_id=None, client_secret=None):
+    """自动刷新 Gmail token"""
+    tokens = list_oauth_accounts()
+    
+    if account_name not in tokens:
+        print(f"❌ 账户 '{account_name}' 不存在")
+        return None
+    
+    token_data = tokens[account_name]
+    
+    # 检查是否需要刷新
+    if not is_token_expired(token_data.get('expires_at', 0)):
+        return token_data['access_token']
+    
+    # 需要刷新
+    if not token_data.get('refresh_token'):
+        print(f"❌ 账户 '{account_name}' 没有 refresh_token，无法自动刷新")
+        return None
+    
+    print(f"🔄 刷新 {account_name} token...")
+    
+    try:
+        # 获取 OAuth 凭证
+        if client_id is None or client_secret is None:
+            client_id, client_secret = _get_oauth_credentials('gmail')
+        
+        if not client_id or not client_secret:
+            print(f"❌ 无法获取 Gmail OAuth 凭证")
+            return None
+        
+        oauth = GmailOAuth(client_id, client_secret)
+        result = oauth.refresh_access_token(token_data['refresh_token'])
+        
+        if 'access_token' in result:
+            # 更新 token
+            token_data['access_token'] = result['access_token']
+            token_data['expires_at'] = time.time() + result.get('expires_in', 3600)
+            
+            # 保存更新
+            tokens[account_name] = token_data
+            with open(OAUTH_TOKENS_FILE, 'w') as f:
+                json.dump(tokens, f, indent=2)
+            OAUTH_TOKENS_FILE.chmod(0o600)
+            
+            print(f"✅ {account_name} token 刷新成功")
+            return result['access_token']
+        else:
+            print(f"❌ 刷新失败: {result.get('error_description', result)}")
+            return None
+    except Exception as e:
+        print(f"❌ 刷新异常: {e}")
+        return None
+
+def get_valid_token(account_name='gmail', client_id=None, client_secret=None):
+    """获取有效的 token（自动刷新）"""
+    token_data = get_oauth_token(account_name)
+    
+    if not token_data:
+        print(f"❌ 账户 '{account_name}' 不存在")
+        return None
+    
+    # 尝试自动刷新
+    valid_token = refresh_gmail_token_auto(account_name, client_id, client_secret)
+    
+    if valid_token:
+        return valid_token
+    else:
+        # 如果刷新失败，返回现有 token（可能已过期）
+        return token_data.get('access_token')
